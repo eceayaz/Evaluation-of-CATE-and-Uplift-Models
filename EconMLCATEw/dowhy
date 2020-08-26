@@ -1,0 +1,77 @@
+!pip install dowhy
+!pip install econml
+import os, sys
+sys.path.insert(1, os.path.abspath("../../../"))  # for dowhy source code
+import numpy as np
+import pandas as pd
+import logging
+import econml
+import dowhy
+from dowhy import CausalModel
+import dowhy.datasets
+
+
+import warnings
+warnings.filterwarnings('ignore')
+data = dowhy.datasets.linear_dataset(10, num_common_causes=4, num_samples=10000,
+                                    num_instruments=2, num_effect_modifiers=2,
+                                     num_treatments=1,
+                                    treatment_is_binary=False,
+                                    num_discrete_common_causes=2,
+                                    num_discrete_effect_modifiers=1,
+                                    one_hot_encode=False)
+df=data['df']
+df.head()
+
+model = CausalModel(data=data["df"],
+                    treatment=data["treatment_name"], outcome=data["outcome_name"],
+                    graph=data["gml_graph"])
+
+model.view_model()
+from IPython.display import Image, display
+display(Image(filename="causal_model.png"))
+
+identified_estimand= model.identify_effect()
+print(identified_estimand)
+
+#Reference: https://microsoft.github.io/dowhy/example_notebooks/dowhy-conditional-treatment-effects.html
+#Estimate CATE using EconML's double machine learning CATE estimator
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import LassoCV
+from sklearn.datasets import make_regression
+from sklearn.preprocessing import PolynomialFeatures
+
+dml_estimate = model.estimate_effect(identified_estimand, method_name="backdoor.econml.dml.DMLCateEstimator",
+                                     control_value = 0,
+                                     treatment_value = 1,
+                                 target_units = 1,  # condition used for CATE
+                                 confidence_intervals=False,
+                                method_params={"init_params":{'model_y':GradientBoostingRegressor(),
+                                                              'model_t': GradientBoostingRegressor(),
+                                                              "model_final":LassoCV(),
+                                                              'featurizer':PolynomialFeatures(degree=1, include_bias=True)},
+                                               "fit_params":{}})
+print(dml_estimate)
+
+
+#Refutation methods
+res_random=model.refute_estimate(identified_estimand, dml_estimate, method_name="random_common_cause")
+print(res_random)
+
+res_unobserved=model.refute_estimate(identified_estimand, dml_estimate, method_name="add_unobserved_common_cause",
+                                     confounders_effect_on_treatment="linear", confounders_effect_on_outcome="linear",
+                                    effect_strength_on_treatment=0.01, effect_strength_on_outcome=0.02)
+print(res_unobserved)
+
+res_unobserved=model.refute_estimate(identified_estimand, dml_estimate, method_name="add_unobserved_common_cause",
+                                     confounders_effect_on_treatment="linear", confounders_effect_on_outcome="linear",
+                                    effect_strength_on_treatment=1, effect_strength_on_outcome=1)
+print(res_unobserved)
+
+res_subset=model.refute_estimate(identified_estimand, dml_estimate,
+        method_name="data_subset_refuter", subset_fraction=0.8)
+print(res_subset)
+
+res_placebo=model.refute_estimate(identified_estimand, dml_estimate,
+        method_name="placebo_treatment_refuter", placebo_type="permute")
+print(res_placebo)
